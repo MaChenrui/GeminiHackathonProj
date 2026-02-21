@@ -162,4 +162,4 @@ MIT License — free to use, modify, and distribute.
 
 ---
 
-*Built for the Google Gemini API Developer Competition 2026*
+*Built for the Google Gemini Hackathon Tokyo*

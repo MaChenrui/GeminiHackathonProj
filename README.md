@@ -6,6 +6,7 @@
 
 ## 目录
 
+- [English README](README.en.md)
 - [玩法介绍](#玩法介绍)
 - [文件说明](#文件说明)
 - [准备工作](#准备工作)
@@ -161,4 +162,4 @@ MIT License — 自由使用、修改和分发。
 
 ---
 
-*Built for Google Gemini API Developer Competition 2026*
+*Built for the Google Gemini Hackathon Tokyo*
