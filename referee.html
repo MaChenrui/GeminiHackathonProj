@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>裁判端 – Gemini 蒙眼竞速</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh;padding:16px}
+  h1{text-align:center;font-size:1.4rem;margin-bottom:12px;color:#38bdf8}
+  .card{background:#1e293b;border-radius:12px;padding:16px;margin-bottom:12px}
+  label{display:block;font-size:.8rem;color:#94a3b8;margin-bottom:4px}
+  input,textarea{width:100%;background:#0f172a;border:1px solid #334155;border-radius:8px;
+    padding:8px 10px;color:#e2e8f0;font-size:.85rem;outline:none}
+  input:focus,textarea:focus{border-color:#38bdf8}
+  textarea{resize:vertical;min-height:80px}
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  button{flex:1;min-width:120px;padding:10px 12px;border:none;border-radius:8px;
+    font-size:.85rem;font-weight:600;cursor:pointer;transition:.15s}
+  .btn-blue{background:#0ea5e9;color:#fff}
+  .btn-blue:hover{background:#38bdf8}
+  .btn-green{background:#22c55e;color:#fff}
+  .btn-green:hover{background:#4ade80}
+  .btn-red{background:#ef4444;color:#fff}
+  .btn-red:hover{background:#f87171}
+  .btn-gray{background:#334155;color:#e2e8f0}
+  .btn-gray:hover{background:#475569}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  .status-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;font-size:.78rem}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px}
+  .dot-ok{background:#22c55e}
+  .dot-err{background:#ef4444}
+  .dot-idle{background:#64748b}
+  .dot-warn{background:#f59e0b}
+  #camPreview{width:100%;max-height:240px;border-radius:8px;background:#000;object-fit:cover}
+  #connCodeBox{width:100%;background:#0f172a;border:1px solid #334155;border-radius:8px;
+    padding:8px 10px;color:#38bdf8;font-size:.78rem;font-family:monospace;word-break:break-all;
+    white-space:pre-wrap;min-height:48px;cursor:pointer;user-select:all}
+  #logBox{font-size:.75rem;color:#94a3b8;height:100px;overflow-y:auto;
+    background:#0f172a;padding:8px;border-radius:6px;margin-top:8px;word-break:break-all}
+  .timer{font-size:1.1rem;font-weight:700;color:#fbbf24;text-align:center;margin-top:4px}
+</style>
+</head>
+<body>
+<h1>🏆 裁判端 – Gemini Live</h1>
+
+<!-- API Key -->
+<div class="card">
+  <label>Gemini API Key</label>
+  <input type="password" id="apiKey" placeholder="AIza..." autocomplete="off">
+  <label style="margin-top:8px">模型 (默认可不改)</label>
+  <input type="text" id="modelId" value="models/gemini-2.5-flash-native-audio-preview-12-2025">
+</div>
+
+<!-- Prompts -->
+<div class="card">
+  <label>裁判 Game Prompt</label>
+  <textarea id="gamePrompt">你是现场裁判 AI。你看到的是全景摄像头画面。
+你的任务：
+1）当主持人说"开始游戏"后，你立刻大声宣布：「比赛现在开始！」
+2）持续监控画面：如果有玩家摘眼罩或偷看，立刻用口令「暂停游戏，Player X 作弊」并重复两遍。
+3）监控谁先用手触碰到奖杯，宣布「Player X 获胜，游戏结束！」并重复两遍。
+4）不要解释、不要说道德，只输出裁判指令，简短有力。
+5）当你不确定时，说「我不确定，请人工确认」，不要瞎判。
+6）每隔 30 秒左右播报一次比赛状态（几位选手目前大致位置）。</textarea>
+
+  <label style="margin-top:10px">玩家 Player Prompt（将生成连接码）</label>
+  <textarea id="playerPrompt">你是我的眼睛与导航，只用中文短句。
+我已蒙眼，你必须优先安全：让我慢走、随时停下、双手前探；遇到不确定必须让我停。
+目标：找到并触碰奖杯。
+指令格式：方向＋小步数＋停（例：「向左一步。停。向前两小步。停。」）。
+每过10秒主动根据我目前的状态给出指示，无需等我发问。</textarea>
+</div>
+
+<!-- Connection Code -->
+<div class="card">
+  <div class="row">
+    <button class="btn-blue" id="btnGenCode">生成连接码</button>
+    <button class="btn-gray" id="btnCopyCode" disabled>复制连接码</button>
+  </div>
+  <label style="margin-top:10px">连接码（玩家粘贴到玩家页「连接码」输入框）</label>
+  <div id="connCodeBox">（点击「生成连接码」后显示）</div>
+</div>
+
+<!-- Camera & Live -->
+<div class="card">
+  <video id="camPreview" autoplay muted playsinline></video>
+  <div class="status-row">
+    <span><span class="dot dot-idle" id="dotCam"></span>摄像头</span>
+    <span><span class="dot dot-idle" id="dotLive"></span>Live 连接</span>
+    <span><span class="dot dot-idle" id="dotAudio"></span>AI 音频</span>
+  </div>
+  <div class="timer" id="timerDisplay">00:00</div>
+  <div class="row" style="align-items:center;margin-top:8px">
+    <label style="margin:0;flex:0 0 auto">&#x1F4F9; 视频帧率</label>
+    <select id="fpsSel" style="flex:1;background:#0f172a;border:1px solid #334155;border-radius:8px;
+      padding:6px 10px;color:#e2e8f0;font-size:.85rem;margin-left:8px">
+      <option value="2000">0.5 fps（省流量）</option>
+      <option value="1000" selected>1 fps（默认）</option>
+      <option value="500">2 fps（更流畅）</option>
+    </select>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <button class="btn-blue" id="btnCam">授权摄像头</button>
+    <button class="btn-green" id="btnConnect" disabled>连接 Live</button>
+    <button class="btn-green" id="btnStart" disabled>📢 开始游戏</button>
+    <button class="btn-red" id="btnStop" disabled>结束游戏</button>
+  </div>
+</div>
+
+<!-- Log -->
+<div class="card">
+  <label>日志</label>
+  <div id="logBox"></div>
+</div>
+
+<script>
+// ─── DOM refs ───────────────────────────────────────────────────────────────
+const apiKeyEl    = document.getElementById('apiKey');
+const modelIdEl   = document.getElementById('modelId');
+const gamePromptEl= document.getElementById('gamePrompt');
+const playerPromptEl= document.getElementById('playerPrompt');
+const camPreview  = document.getElementById('camPreview');
+const logBox      = document.getElementById('logBox');
+const timerDisplay= document.getElementById('timerDisplay');
+
+const btnGenCode  = document.getElementById('btnGenCode');
+const btnCopyCode = document.getElementById('btnCopyCode');
+const connCodeBox = document.getElementById('connCodeBox');
+const btnCam      = document.getElementById('btnCam');
+const btnConnect  = document.getElementById('btnConnect');
+const btnStart    = document.getElementById('btnStart');
+const btnStop     = document.getElementById('btnStop');
+
+const dotCam   = document.getElementById('dotCam');
+const dotLive  = document.getElementById('dotLive');
+const dotAudio = document.getElementById('dotAudio');
+
+// ─── State ──────────────────────────────────────────────────────────────────
+let ws            = null;
+let camStream     = null;
+let audioCtx      = null;
+let nextPlayTime  = 0;
+let videoTimer    = null;
+let gameStartTime = null;
+let timerInterval = null;
+let isRunning     = false;
+let totalElapsed  = 0;
+
+// ─── Log ────────────────────────────────────────────────────────────────────
+function log(msg, type='info'){
+  const colors={info:'#94a3b8',ok:'#4ade80',err:'#f87172',warn:'#fbbf24'};
+  const d=new Date();
+  const ts=`${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}:${d.getSeconds().toString().padStart(2,'0')}`;
+  logBox.innerHTML+=`<span style="color:${colors[type]||colors.info}">[${ts}] ${msg}</span>\n`;
+  logBox.scrollTop=logBox.scrollHeight;
+}
+
+function setDot(el,state){
+  el.className='dot '+(state==='ok'?'dot-ok':state==='err'?'dot-err':state==='warn'?'dot-warn':'dot-idle');
+}
+
+// ─── Connection Code ─────────────────────────────────────────────────────────
+btnGenCode.onclick = () => {
+  const txt = playerPromptEl.value.trim();
+  if(!txt){alert('玩家 Prompt 不能为空');return;}
+  const code = btoa(unescape(encodeURIComponent(txt)));
+  connCodeBox.textContent = code;
+  btnCopyCode.disabled = false;
+  log('连接码已生成，共 '+code.length+' 字符','ok');
+};
+
+btnCopyCode.onclick = () => {
+  const code = connCodeBox.textContent;
+  if(!code || code.startsWith('（')) return;
+  navigator.clipboard.writeText(code).then(()=>{
+    btnCopyCode.textContent='✅ 已复制';
+    log('已复制连接码','ok');
+    setTimeout(()=>{ btnCopyCode.textContent='复制连接码'; },1500);
+  });
+};
+
+// ─── Camera ─────────────────────────────────────────────────────────────────
+btnCam.onclick = async () => {
+  try{
+    camStream = await navigator.mediaDevices.getUserMedia({
+      video:{facingMode:'environment', width:{ideal:640}, height:{ideal:480}},
+      audio:false
+    });
+    camPreview.srcObject = camStream;
+    setDot(dotCam,'ok');
+    btnConnect.disabled = false;
+    btnCam.textContent = '✅ 摄像头已就绪';
+    btnCam.disabled = true;
+    log('摄像头授权成功','ok');
+  }catch(e){
+    setDot(dotCam,'err');
+    log('摄像头授权失败: '+e.message,'err');
+  }
+};
+
+// ─── Audio Playback ──────────────────────────────────────────────────────────
+function ensureAudioCtx(){
+  if(!audioCtx || audioCtx.state==='closed'){
+    audioCtx = new AudioContext({sampleRate:24000});
+    nextPlayTime = 0;
+  }
+  if(audioCtx.state==='suspended') audioCtx.resume();
+}
+
+function enqueueAudio(base64data){
+  ensureAudioCtx();
+  try{
+    const bin = atob(base64data);
+    const bytes = new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+    const samples = bytes.length/2;
+    const buf = audioCtx.createBuffer(1,samples,24000);
+    const ch  = buf.getChannelData(0);
+    const view= new DataView(bytes.buffer);
+    for(let i=0;i<samples;i++) ch[i]=view.getInt16(i*2,true)/32768;
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    src.connect(audioCtx.destination);
+    const t = Math.max(audioCtx.currentTime+0.01, nextPlayTime);
+    src.start(t);
+    nextPlayTime = t + buf.duration;
+    setDot(dotAudio,'ok');
+  }catch(e){ log('音频播放错误:'+e.message,'err'); }
+}
+
+function clearAudioQueue(){
+  if(audioCtx){ audioCtx.close(); audioCtx=null; nextPlayTime=0; }
+  setDot(dotAudio,'idle');
+  log('已打断音频播放队列','warn');
+}
+
+// ─── Video Frame Capture ─────────────────────────────────────────────────────
+const captureCanvas = document.createElement('canvas');
+captureCanvas.width  = 320;
+captureCanvas.height = 240;
+const captureCtx2d  = captureCanvas.getContext('2d');
+
+function startVideoCapture(){
+  const interval = parseInt(document.getElementById('fpsSel').value)||1000;
+  videoTimer = setInterval(()=>{
+    if(!camStream||!ws||ws.readyState!==1) return;
+    if(!camPreview.videoWidth||!camPreview.videoHeight) return; // not ready yet
+    captureCtx2d.drawImage(camPreview, 0, 0, 320, 240);
+    const jpeg = captureCanvas.toDataURL('image/jpeg',0.5);
+    const base64 = jpeg.split(',')[1];
+    wsSend({realtimeInput:{video:{data:base64, mimeType:'image/jpeg'}}});
+  }, interval);
+}
+
+function stopVideoCapture(){
+  clearInterval(videoTimer);
+  videoTimer = null;
+}
+
+// ─── Timer UI ────────────────────────────────────────────────────────────────
+function startTimer(){
+  gameStartTime = Date.now() - totalElapsed*1000;
+  timerInterval = setInterval(()=>{
+    const s = Math.floor((Date.now()-gameStartTime)/1000);
+    totalElapsed = s;
+    const m = Math.floor(s/60);
+    timerDisplay.textContent = `${String(m).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
+  },500);
+}
+
+function stopTimer(){ clearInterval(timerInterval); timerInterval=null; }
+
+// ─── WebSocket helpers ───────────────────────────────────────────────────────
+function wsSend(obj){
+  if(ws&&ws.readyState===1) ws.send(JSON.stringify(obj));
+}
+
+// ─── Live Connection ─────────────────────────────────────────────────────────
+function connectLive(){
+  const key   = apiKeyEl.value.trim();
+  const model = modelIdEl.value.trim()||'models/gemini-2.5-flash-native-audio-preview-12-2025';
+  if(!key){alert('请输入 API Key');return;}
+
+  const url = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${encodeURIComponent(key)}`;
+  ws = new WebSocket(url);
+  setDot(dotLive,'warn');
+  log('正在连接 Live...','warn');
+
+  ws.onopen = () => {
+    setDot(dotLive,'ok');
+    log('WebSocket 已连接','ok');
+
+    const systemText = gamePromptEl.value.trim();
+
+    // Setup message
+    wsSend({
+      setup:{
+        model,
+        generationConfig:{
+          responseModalities:['AUDIO'],
+          mediaResolution:'MEDIA_RESOLUTION_LOW',
+          speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:'Aoede'}}},
+          thinkingConfig:{thinkingBudget:0}
+        },
+        systemInstruction:{parts:[{text:systemText}]}
+      }
+    });
+    log('已发送 setup','ok');
+
+    startVideoCapture();
+  };
+
+  ws.onmessage = async (evt) => {
+    let data = evt.data;
+    if(data instanceof Blob) data = await data.text();
+    let msg;
+    try{ msg=JSON.parse(data); }catch(e){ log('JSON解析失败: '+e.message,'err'); return; }
+
+    if(msg.error){
+      log('API错误 '+msg.error.code+': '+msg.error.message,'err');
+      return;
+    }
+
+    if(msg.serverContent?.interrupted){
+      clearAudioQueue();
+      return;
+    }
+    if(msg.serverContent?.modelTurn?.parts){
+      for(const part of msg.serverContent.modelTurn.parts){
+        if(part.inlineData?.mimeType?.startsWith('audio/')){
+          enqueueAudio(part.inlineData.data);
+        }
+        if(part.text) log('AI: '+part.text,'ok');
+      }
+    }
+    if(msg.setupComplete){
+      log('Setup 完成，Live 就绪','ok');
+    }
+  };
+
+  ws.onerror = () => { setDot(dotLive,'err'); log('WS 错误','err'); };
+  ws.onclose = (e) => {
+    setDot(dotLive,'idle');
+    stopVideoCapture();
+    setDot(dotAudio,'idle');
+    log(`WS 已关闭 (code=${e.code})`, e.code===1000?'info':'warn');
+    // Reconnect whenever isRunning (covers 2-min server timeout = code 1000)
+    if(isRunning){
+      log('3秒后自动重连...','warn');
+      setTimeout(()=>connectLive(),3000);
+    }
+  };
+}
+
+// ─── Buttons ─────────────────────────────────────────────────────────────────
+btnConnect.onclick = () => {
+  isRunning = true;
+  totalElapsed = 0;
+  connectLive();
+  startTimer();
+  btnConnect.disabled = true;
+  btnStart.disabled   = false;
+  btnStop.disabled    = false;
+};
+
+btnStart.onclick = () => {
+  // Send a text turn to trigger Gemini to announce game start
+  wsSend({clientContent:{turns:[{role:'user',parts:[{text:'主持人说：现在开始游戏！请你宣布比赛开始。'}]}], turnComplete:true}});
+  log('已发送"开始游戏"指令','ok');
+};
+
+btnStop.onclick = () => {
+  isRunning = false;
+  stopVideoCapture();
+  stopTimer();
+  if(ws){ ws.close(1000,'user stop'); ws=null; }
+  clearAudioQueue();
+  setDot(dotLive,'idle');
+  btnConnect.disabled = false;
+  btnStart.disabled   = true;
+  btnStop.disabled    = true;
+  log('游戏结束，连接已关闭','warn');
+};
+
+// ─── Restore API key from localStorage ──────────────────────────────────────
+apiKeyEl.value = localStorage.getItem('gemini_api_key')||'';
+apiKeyEl.addEventListener('input',()=>localStorage.setItem('gemini_api_key',apiKeyEl.value));
+
+log('裁判端就绪。请先输入 API Key → 授权摄像头 → 连接 Live。','ok');
+</script>
+</body>
+</html>
